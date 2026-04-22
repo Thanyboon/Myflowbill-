@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#2563eb">
+    <title>FlowBill v4.5 - Cloud Sync</title>
+    
+    <link rel="manifest" href='data:application/manifest+json,{"name":"FlowBill Cloud","short_name":"FlowBill","start_url":"index.html","display":"standalone","background_color":"#f1f5f9","theme_color":"#2563eb","icons":[{"src":"https://cdn-icons-png.flaticon.com/512/1052/1052856.png","sizes":"512x512","type":"image/png"}]}'>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+
+    <style>
+        body { font-family: 'Kanit', sans-serif; background: #f1f5f9; color: #1e293b; -webkit-tap-highlight-color: transparent; }
+        .card-ui { background: white; border-radius: 24px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05); }
+        .receipt-container { width: 100%; max-width: 380px; background: white; padding: 25px; border-radius: 20px; border: 1px solid #e2e8f0; position: relative; }
+        .tab-active { background: #2563eb; color: white; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3); }
+        .fade-in { animation: fadeIn 0.3s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        
+        #historyModal { display: none; position: fixed; inset: 0; background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(4px); z-index: 100; align-items: center; justify-content: center; }
+        .modal-content { background: white; width: 90%; max-width: 450px; border-radius: 32px; padding: 24px; max-height: 80vh; overflow-y: auto; }
+    </style>
+</head>
+<body class="pb-10">
+
+    <div id="cloudIndicator" class="bg-slate-800 text-white text-[10px] text-center py-1 font-bold uppercase tracking-widest sticky top-0 z-[60]">
+        ☁️ สถานะคลาวด์: <span id="syncStatus" class="text-amber-400">กำลังเชื่อมต่อ...</span>
+    </div>
+
+    <div id="historyModal" onclick="closeHistory()">
+        <div class="modal-content fade-in" onclick="event.stopPropagation()">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-2xl font-black text-slate-900">คลังบิลทั้งหมด</h2>
+                <button onclick="closeHistory()" class="w-10 h-10 flex items-center justify-center bg-slate-100 rounded-full font-bold">✕</button>
+            </div>
+            <div id="historyList" class="space-y-3"></div>
+        </div>
+    </div>
+
+    <nav class="sticky top-[18px] z-50 bg-white/90 backdrop-blur-md border-b border-slate-200 px-6 py-4 flex justify-between items-center mx-4 rounded-2xl shadow-sm">
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white font-bold shadow-lg">F</div>
+            <div>
+                <h1 class="text-sm font-bold leading-none">FlowBill</h1>
+                <span class="text-[10px] text-blue-500 font-bold uppercase">Cloud v4.5</span>
+            </div>
+        </div>
+        <button onclick="openHistory()" class="p-2 px-4 bg-blue-50 text-blue-600 rounded-xl font-bold text-xs active:scale-95 transition-all">📂 รายการบิล</button>
+    </nav>
+
+    <main class="max-w-5xl mx-auto p-4 grid grid-cols-1 lg:grid-cols-2 gap-8 mt-4">
+        
+        <div class="space-y-6">
+            <div class="card-ui p-4 bg-blue-50/50 border border-blue-100">
+                <label class="text-[11px] font-bold text-blue-400 uppercase block mb-1">โปรเจกต์ / ชื่อบิล</label>
+                <input type="text" id="billGroup" value="บิลทั่วไป" onchange="render()" class="w-full p-3 bg-white rounded-xl border-2 border-blue-100 outline-none font-bold text-blue-600 focus:border-blue-500">
+            </div>
+
+            <div class="flex bg-slate-200 p-1 rounded-2xl">
+                <button onclick="switchTab('finance')" id="tab-finance" class="flex-1 py-3 text-sm font-bold rounded-xl tab-active">💰 สินค้า/ทั่วไป</button>
+                <button onclick="switchTab('electric')" id="tab-electric" class="flex-1 py-3 text-sm font-bold rounded-xl text-slate-500">⚡ ค่าไฟ</button>
+            </div>
+
+            <div class="card-ui p-6 space-y-5">
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="space-y-1">
+                        <label class="text-[11px] font-bold text-slate-400 uppercase">วันที่</label>
+                        <input type="date" id="inputDate" class="w-full p-4 bg-slate-50 rounded-2xl outline-none">
+                    </div>
+                    <div class="space-y-1">
+                        <label class="text-[11px] font-bold text-slate-400 uppercase">ประเภท</label>
+                        <select id="type" class="w-full p-4 bg-slate-50 rounded-2xl outline-none font-bold">
+                            <option value="expense">รายจ่าย (-)</option>
+                            <option value="income">รายรับ (+)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div id="finance-inputs" class="space-y-4">
+                    <input type="text" id="note" placeholder="รายการสินค้า / บันทึก..." class="w-full p-4 bg-slate-50 rounded-2xl outline-none">
+                    <div class="grid grid-cols-3 gap-3">
+                        <div class="text-center">
+                            <label class="text-[10px] text-slate-400 font-bold">ราคาต่อหน่วย</label>
+                            <input type="number" id="unitPrice" oninput="calcFinance()" placeholder="0" class="w-full p-3 bg-slate-50 rounded-xl text-center font-bold">
+                        </div>
+                        <div class="text-center">
+                            <label class="text-[10px] text-slate-400 font-bold">จำนวน</label>
+                            <input type="number" id="qty" oninput="calcFinance()" value="1" class="w-full p-3 bg-slate-50 rounded-xl text-center font-bold">
+                        </div>
+                        <div class="text-center">
+                            <label class="text-[10px] text-blue-400 font-bold">ค่าส่ง (+/-)</label>
+                            <input type="number" id="shipFee" oninput="calcFinance()" placeholder="0" class="w-full p-3 bg-blue-50 rounded-xl text-center text-blue-600 font-bold">
+                        </div>
+                    </div>
+                </div>
+
+                <div id="electric-inputs" class="space-y-4 hidden">
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="space-y-1 text-center">
+                            <label class="text-[10px] font-bold text-slate-400 uppercase">เลขมิเตอร์เก่า</label>
+                            <input type="number" id="meterOld" oninput="calcElectric()" placeholder="0" class="w-full p-4 bg-slate-50 rounded-2xl text-center font-bold">
+                        </div>
+                        <div class="space-y-1 text-center">
+                            <label class="text-[10px] font-bold text-slate-400 uppercase">เลขมิเตอร์ใหม่</label>
+                            <input type="number" id="meterNew" oninput="calcElectric()" placeholder="0" class="w-full p-4 bg-slate-50 rounded-2xl text-center font-bold">
+                        </div>
+                    </div>
+                    <div class="flex justify-between items-center bg-amber-50 p-4 rounded-xl border border-amber-100">
+                        <span class="text-xs font-bold text-amber-700">หน่วยละ (บาท):</span>
+                        <input type="number" id="rate" value="7" oninput="calcElectric()" class="w-20 bg-white rounded-lg p-1 text-center font-bold text-blue-600 border border-amber-200">
+                        <span id="unitsUsed" class="text-xs font-bold text-amber-700">ใช้ไป: 0 หน่วย</span>
+                    </div>
+                </div>
+
+                <div class="pt-2">
+                    <label class="text-[11px] font-bold text-slate-400 uppercase block text-center mb-1">ยอดรวมรายการนี้</label>
+                    <input type="number" id="amt" placeholder="0.00" class="w-full p-5 bg-blue-600 text-white rounded-[32px] text-4xl font-bold text-center shadow-xl shadow-blue-200">
+                    <button id="saveBtn" onclick="saveData()" class="w-full mt-6 bg-slate-900 text-white p-5 rounded-2xl font-bold text-lg active:scale-95 transition-all shadow-lg">บันทึกข้อมูลเข้าคลาวด์</button>
+                </div>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-4">
+                <button onclick="exportImg()" class="card-ui p-4 flex flex-col items-center gap-2 active:bg-slate-100">📸 <span class="text-[10px] font-bold text-slate-500 uppercase">เซฟเป็นรูป</span></button>
+                <button onclick="clearAll()" class="card-ui p-4 flex flex-col items-center gap-2 active:bg-rose-50">🗑️ <span class="text-[10px] font-bold text-rose-400 uppercase">ล้างบิลนี้</span></button>
+            </div>
+        </div>
+
+        <div id="captureArea" class="flex justify-center p-2">
+            <div class="receipt-container shadow-2xl" id="receipt">
+                <div class="text-center border-b-2 border-dashed border-slate-200 pb-6 mb-6">
+                    <h2 class="text-3xl font-black italic text-slate-900 leading-none">FLOWBILL</h2>
+                    <p id="billTitleDisplay" class="text-[10px] text-blue-500 font-bold uppercase mt-2 tracking-widest"></p>
+                </div>
+                <div id="bill-list" class="min-h-[300px] space-y-4"></div>
+                <div class="mt-8 pt-6 border-t-4 border-double border-slate-900 flex justify-between items-end">
+                    <span class="text-xs font-bold text-blue-600 uppercase">ยอดรวมทั้งหมด</span>
+                    <span id="grand-total" class="text-4xl font-black text-slate-900 tabular-nums">0.00</span>
+                </div>
+                <div class="mt-6 text-[8px] text-slate-300 text-center uppercase tracking-widest">
+                    FlowBill Cloud v4.5 | เชื่อมข้อมูลอัตโนมัติ
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // 🛑 นำ URL จาก Firebase Realtime Database ของคุณมาใส่ที่นี่
+        const firebaseConfig = {
+            databaseURL: "https://console.firebase.google.com/u/0/project/mybillapp-99a67/database/mybillapp-99a67-default-rtdb/data/~2F?hl=th" 
+        };
+
+        let database;
+        let allItems = [];
+        let currentMode = 'finance';
+
+        // Register Service Worker สำหรับ Web App
+        if ('serviceWorker' in navigator) {
+            const swCode = `self.addEventListener('fetch', function(e){});`;
+            const blob = new Blob([swCode], {type: 'text/javascript'});
+            const url = URL.createObjectURL(blob);
+            navigator.serviceWorker.register(url);
+        }
+
+        // เชื่อมต่อ Firebase
+        try {
+            firebase.initializeApp(firebaseConfig);
+            database = firebase.database();
+            const statusIcon = document.getElementById('syncStatus');
+            
+            database.ref('.info/connected').on('value', (snap) => {
+                if (snap.val() === true) {
+                    statusIcon.innerText = "ออนไลน์ (เชื่อมต่อคลาวด์)";
+                    statusIcon.className = "text-emerald-400";
+                } else {
+                    statusIcon.innerText = "ออฟไลน์ (ใช้ข้อมูลในเครื่อง)";
+                    statusIcon.className = "text-rose-400";
+                }
+            });
+
+            database.ref('bills').on('value', (snapshot) => {
+                const data = snapshot.val();
+                allItems = data ? Object.values(data) : [];
+                render();
+            });
+        } catch (e) {
+            console.error("Firebase Error");
+            allItems = JSON.parse(localStorage.getItem('fb_v45_local') || '[]');
+            render();
+        }
+
+        document.getElementById('inputDate').valueAsDate = new Date();
+
+        function switchTab(mode) {
+            currentMode = mode;
+            document.getElementById('finance-inputs').classList.toggle('hidden', mode !== 'finance');
+            document.getElementById('electric-inputs').classList.toggle('hidden', mode !== 'electric');
+            document.getElementById('tab-finance').className = mode === 'finance' ? 'flex-1 py-3 text-sm font-bold rounded-xl tab-active transition-all' : 'flex-1 py-3 text-sm font-bold rounded-xl text-slate-500';
+            document.getElementById('tab-electric').className = mode === 'electric' ? 'flex-1 py-3 text-sm font-bold rounded-xl tab-active transition-all' : 'flex-1 py-3 text-sm font-bold rounded-xl text-slate-500';
+            if(mode === 'electric') {
+                document.getElementById('note').value = "ค่าไฟฟ้า";
+                document.getElementById('type').value = "expense";
+            }
+        }
+
+        // คำนวณราคาสินค้า + ค่าส่ง
+        function calcFinance() {
+            const p = parseFloat(document.getElementById('unitPrice').value || 0);
+            const q = parseFloat(document.getElementById('qty').value || 1);
+            const s = parseFloat(document.getElementById('shipFee').value || 0);
+            document.getElementById('amt').value = ((p * q) + s).toFixed(2);
+        }
+
+        // คำนวณค่าไฟ
+        function calcElectric() {
+            const oldM = parseFloat(document.getElementById('meterOld').value || 0);
+            const newM = parseFloat(document.getElementById('meterNew').value || 0);
+            const rate = parseFloat(document.getElementById('rate').value || 0);
+            const units = Math.max(0, newM - oldM);
+            document.getElementById('unitsUsed').innerText = `ใช้ไป: ${units} หน่วย`;
+            document.getElementById('amt').value = (units * rate).toFixed(2);
+            document.getElementById('note').value = `ค่าไฟฟ้า (${units} หน่วย)`;
+        }
+
+        function saveData() {
+            const amt = parseFloat(document.getElementById('amt').value);
+            if(!amt || amt <= 0) return alert('กรุณาระบุยอดเงิน');
+
+            const id = Date.now().toString();
+            const item = {
+                id: id,
+                group: document.getElementById('billGroup').value || 'ทั่วไป',
+                date: document.getElementById('inputDate').value,
+                note: document.getElementById('note').value || 'ไม่มีรายละเอียด',
+                amt: amt,
+                type: document.getElementById('type').value,
+                mode: currentMode,
+                details: currentMode === 'electric' ? 
+                    { old: document.getElementById('meterOld').value, new: document.getElementById('meterNew').value, rate: document.getElementById('rate').value } :
+                    { price: document.getElementById('unitPrice').value, qty: document.getElementById('qty').value, ship: document.getElementById('shipFee').value }
+            };
+
+            if(database) {
+                database.ref('bills/' + id).set(item);
+            } else {
+                allItems.push(item);
+                localStorage.setItem('fb_v45_local', JSON.stringify(allItems));
+                render();
+            }
+            
+            // ล้างค่าหลังบันทึก
+            ['unitPrice','shipFee','meterOld','meterNew','amt','note'].forEach(id => {
+                const el = document.getElementById(id);
+                if(el) el.value = '';
+            });
+            document.getElementById('qty').value = '1';
+        }
+
+        function render() {
+            const groupName = document.getElementById('billGroup').value || 'บิลทั่วไป';
+            document.getElementById('billTitleDisplay').innerText = groupName;
+            const list = document.getElementById('bill-list');
+            list.innerHTML = '';
+            let total = 0;
+
+            const filtered = allItems.filter(i => i.group === groupName).sort((a,b) => b.id - a.id);
+
+            filtered.forEach(item => {
+                const isExp = item.type === 'expense';
+                total += isExp ? -item.amt : item.amt;
+
+                let subText = item.mode === 'electric' ? 
+                    `มิเตอร์: ${item.details.old} → ${item.details.new}` :
+                    `${item.details.price || 0} x ${item.details.qty || 1}${item.details.ship != 0 ? ' (ส่ง '+item.details.ship+')' : ''}`;
+
+                list.innerHTML += `
+                    <div class="flex justify-between items-start p-2 border-b border-slate-50 hover:bg-slate-50 transition-all fade-in">
+                        <div class="flex-1">
+                            <span class="text-[8px] text-slate-400 block font-bold">${item.date}</span>
+                            <h3 class="text-sm font-bold text-slate-800 truncate pr-2">${item.note}</h3>
+                            <p class="text-[10px] text-slate-400 italic">${subText}</p>
+                        </div>
+                        <div class="text-right">
+                            <span class="font-black text-sm ${isExp?'text-rose-500':'text-emerald-500'}">
+                                ${isExp?'-':'+'}${item.amt.toLocaleString(undefined, {minimumFractionDigits:2})}
+                            </span>
+                            <button onclick="deleteItem('${item.id}')" class="block text-[9px] text-slate-300 ml-auto font-bold hover:text-rose-500">ลบ</button>
+                        </div>
+                    </div>`;
+            });
+            document.getElementById('grand-total').innerText = total.toLocaleString(undefined, {minimumFractionDigits:2});
+        }
+
+        function deleteItem(id) {
+            if(!confirm('ลบรายการนี้ใช่หรือไม่?')) return;
+            if(database) database.ref('bills/' + id).remove();
+        }
+
+        function clearAll() {
+            const group = document.getElementById('billGroup').value;
+            if(!confirm(`ล้างข้อมูลทั้งหมดในบิล "${group}"?`)) return;
+            if(database) {
+                allItems.filter(i => i.group === group).forEach(i => database.ref('bills/' + i.id).remove());
+            }
+        }
+
+        async function exportImg() {
+            const canvas = await html2canvas(document.getElementById('receipt'), { scale: 3, backgroundColor: "#ffffff" });
+            const link = document.createElement('a');
+            link.download = `Bill-${document.getElementById('billGroup').value}-${Date.now()}.png`;
+            link.href = canvas.toDataURL();
+            link.click();
+        }
+
+        function openHistory() {
+            document.getElementById('historyModal').style.display = 'flex';
+            const groups = {};
+            allItems.forEach(i => {
+                groups[i.group] = (groups[i.group] || 0) + (i.type === 'expense' ? -i.amt : i.amt);
+            });
+            
+            const html = Object.keys(groups).map(name => `
+                <div onclick="selectBill('${name}')" class="p-4 bg-slate-50 rounded-2xl flex justify-between items-center cursor-pointer active:bg-blue-100 transition-all border border-transparent hover:border-blue-200">
+                    <div>
+                        <span class="font-bold text-slate-700">${name}</span>
+                        <p class="text-[9px] text-slate-400 uppercase">ยอดคงเหลือบิลนี้</p>
+                    </div>
+                    <span class="font-black text-lg ${groups[name] >= 0 ? 'text-emerald-500' : 'text-rose-500'}">${groups[name].toLocaleString(undefined, {minimumFractionDigits:2})}</span>
+                </div>
+            `).join('');
+            
+            document.getElementById('historyList').innerHTML = html || '<p class="text-center text-slate-400 py-10">ยังไม่มีประวัติการบันทึก</p>';
+        }
+
+        function selectBill(name) { 
+            document.getElementById('billGroup').value = name; 
+            render(); 
+            closeHistory(); 
+        }
+
+        function closeHistory() { 
+            document.getElementById('historyModal').style.display = 'none'; 
+        }
+    </script>
+</body>
+</html>
