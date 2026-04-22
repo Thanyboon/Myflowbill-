@@ -3,12 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="FlowBill">
+    <meta name="mobile-web-app-capable" content="yes">
     <meta name="theme-color" content="#2563eb">
+    
     <title>FlowBill v4.5 - Cloud Sync</title>
     
-    <link rel="manifest" href='data:application/manifest+json,{"name":"FlowBill Cloud","short_name":"FlowBill","start_url":"index.html","display":"standalone","background_color":"#f1f5f9","theme_color":"#2563eb","icons":[{"src":"https://cdn-icons-png.flaticon.com/512/1052/1052856.png","sizes":"512x512","type":"image/png"}]}'>
+    <link rel="manifest" href='data:application/manifest+json,{"name":"FlowBill Cloud","short_name":"FlowBill","start_url":"index.html","display":"standalone","orientation":"portrait","background_color":"#f1f5f9","theme_color":"#2563eb","icons":[{"src":"https://cdn-icons-png.flaticon.com/512/1052/1052856.png","sizes":"512x512","type":"image/png"}]}'>
 
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600;700&display=swap" rel="stylesheet">
@@ -18,7 +22,17 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 
     <style>
-        body { font-family: 'Kanit', sans-serif; background: #f1f5f9; color: #1e293b; -webkit-tap-highlight-color: transparent; }
+        body { 
+            font-family: 'Kanit', sans-serif; 
+            background: #f1f5f9; 
+            color: #1e293b; 
+            -webkit-tap-highlight-color: transparent;
+            /* ป้องกันการเลื่อนจอไปมาบน iOS */
+            overscroll-behavior-y: contain;
+        }
+        /* ปรับตำแหน่ง Header สำหรับมือถือที่มีรอยบาก */
+        #cloudIndicator { padding-top: env(safe-area-inset-top); }
+
         .card-ui { background: white; border-radius: 24px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05); }
         .receipt-container { width: 100%; max-width: 380px; background: white; padding: 25px; border-radius: 20px; border: 1px solid #e2e8f0; position: relative; }
         .tab-active { background: #2563eb; color: white; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3); }
@@ -45,7 +59,7 @@
         </div>
     </div>
 
-    <nav class="sticky top-[18px] z-50 bg-white/90 backdrop-blur-md border-b border-slate-200 px-6 py-4 flex justify-between items-center mx-4 rounded-2xl shadow-sm">
+    <nav class="sticky top-[20px] z-50 bg-white/90 backdrop-blur-md border-b border-slate-200 px-6 py-4 flex justify-between items-center mx-4 rounded-2xl shadow-sm">
         <div class="flex items-center gap-3">
             <div class="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white font-bold shadow-lg">F</div>
             <div>
@@ -154,22 +168,24 @@
     <script>
         // 🛑 นำ URL จาก Firebase Realtime Database ของคุณมาใส่ที่นี่
         const firebaseConfig = {
-            databaseURL: "https://console.firebase.google.com/u/0/project/mybillapp-99a67/database/mybillapp-99a67-default-rtdb/data/~2F?hl=th" 
+            databaseURL: "https://mybillapp-99a67-default-rtdb.asia-southeast1.firebasedatabase.app" 
         };
 
         let database;
         let allItems = [];
         let currentMode = 'finance';
 
-        // Register Service Worker สำหรับ Web App
+        // ระบบ Service Worker แบบ Inline เพื่อรองรับการเป็นแอป
         if ('serviceWorker' in navigator) {
-            const swCode = `self.addEventListener('fetch', function(e){});`;
+            const swCode = `
+                self.addEventListener('install', (e) => self.skipWaiting());
+                self.addEventListener('fetch', (e) => e.respondWith(fetch(e.request).catch(() => e.respondWith(new Response('Offline')))));
+            `;
             const blob = new Blob([swCode], {type: 'text/javascript'});
             const url = URL.createObjectURL(blob);
             navigator.serviceWorker.register(url);
         }
 
-        // เชื่อมต่อ Firebase
         try {
             firebase.initializeApp(firebaseConfig);
             database = firebase.database();
@@ -210,7 +226,6 @@
             }
         }
 
-        // คำนวณราคาสินค้า + ค่าส่ง
         function calcFinance() {
             const p = parseFloat(document.getElementById('unitPrice').value || 0);
             const q = parseFloat(document.getElementById('qty').value || 1);
@@ -218,7 +233,6 @@
             document.getElementById('amt').value = ((p * q) + s).toFixed(2);
         }
 
-        // คำนวณค่าไฟ
         function calcElectric() {
             const oldM = parseFloat(document.getElementById('meterOld').value || 0);
             const newM = parseFloat(document.getElementById('meterNew').value || 0);
@@ -255,7 +269,6 @@
                 render();
             }
             
-            // ล้างค่าหลังบันทึก
             ['unitPrice','shipFee','meterOld','meterNew','amt','note'].forEach(id => {
                 const el = document.getElementById(id);
                 if(el) el.value = '';
@@ -278,11 +291,11 @@
 
                 let subText = item.mode === 'electric' ? 
                     `มิเตอร์: ${item.details.old} → ${item.details.new}` :
-                    `${item.details.price || 0} x ${item.details.qty || 1}${item.details.ship != 0 ? ' (ส่ง '+item.details.ship+')' : ''}`;
+                    `${item.details.price || 0} x ${item.details.qty || 1}${item.details.ship != 0 ? ' (+ส่ง '+item.details.ship+')' : ''}`;
 
                 list.innerHTML += `
                     <div class="flex justify-between items-start p-2 border-b border-slate-50 hover:bg-slate-50 transition-all fade-in">
-                        <div class="flex-1">
+                        <div class="flex-1 min-w-0">
                             <span class="text-[8px] text-slate-400 block font-bold">${item.date}</span>
                             <h3 class="text-sm font-bold text-slate-800 truncate pr-2">${item.note}</h3>
                             <p class="text-[10px] text-slate-400 italic">${subText}</p>
